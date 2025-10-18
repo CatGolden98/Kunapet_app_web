@@ -41,7 +41,12 @@ const ServiceListingNew: React.FC<ServiceListingNewProps> = ({ onNavigate, categ
       placeholder: 'Buscar grooming...',
       serviceTypes: ['Baño Completo', 'Corte de Pelo', 'Limpieza Dental', 'Corte de Uñas', 'Spa'],
     },
-    boarding: {
+    hospedaje: { // coincide con la navegación desde Home
+      title: 'Hospedaje para Mascotas',
+      placeholder: 'Buscar hospedaje...',
+      serviceTypes: ['Día Completo', 'Noche', 'Fin de Semana', 'Vacaciones'],
+    },
+    boarding: { // dejamos alias por si hay navegaciones antiguas
       title: 'Hospedaje para Mascotas',
       placeholder: 'Buscar hospedaje...',
       serviceTypes: ['Día Completo', 'Noche', 'Fin de Semana', 'Vacaciones'],
@@ -60,15 +65,35 @@ const ServiceListingNew: React.FC<ServiceListingNewProps> = ({ onNavigate, categ
 
   const loadProviders = async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('providers')
-      .select('*, services(*)')
-      .eq('services.category', category)
-      .order('rating', { ascending: false });
+    // Consultamos services filtrados por categoría y traemos el provider embebido
+    const { data: svc, error } = await supabase
+      .from('services')
+      .select('provider_id, price, providers(*)')
+      .eq('category', category)
+      .order('price', { ascending: true });
 
-    if (data) {
-      setProviders(data);
+    if (error) {
+      setProviders([]);
+      setLoading(false);
+      return;
     }
+
+    // Dedupe por provider_id y anexa un precio mínimo de referencia
+    const map = new Map<string, any>();
+    (svc || []).forEach((row: any) => {
+      const prov = row.providers;
+      if (!prov) return;
+      const existing = map.get(row.provider_id);
+      if (!existing) {
+        map.set(row.provider_id, { ...prov, services: [{ price: row.price }] });
+      } else {
+        existing.services = existing.services || [];
+        existing.services.push({ price: row.price });
+      }
+    });
+
+    const list = Array.from(map.values()).sort((a, b) => (b.rating || 0) - (a.rating || 0));
+    setProviders(list);
     setLoading(false);
   };
 
