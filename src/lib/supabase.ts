@@ -7,8 +7,13 @@ const isGhPages = typeof window !== 'undefined' && window.location.hostname.ends
 const FALLBACK_URL = 'https://hrtsvbpbvxsubeepwgqh.supabase.co';
 const FALLBACK_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhydHN2YnBidnhzdWJlZXB3Z3FoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjA0ODkxNTMsImV4cCI6MjA3NjA2NTE1M30.J1AYc9lM0k2tC-kr_m8LFo4wk33k37hOjFyUX0e_0jY';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || (isGhPages ? FALLBACK_URL : '');
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || (isGhPages ? FALLBACK_ANON : '');
+// En Pages, usamos SIEMPRE el fallback para evitar variables bakeadas del build
+const supabaseUrl = isGhPages
+  ? FALLBACK_URL
+  : (import.meta.env.VITE_SUPABASE_URL || FALLBACK_URL);
+const supabaseAnonKey = isGhPages
+  ? FALLBACK_ANON
+  : (import.meta.env.VITE_SUPABASE_ANON_KEY || FALLBACK_ANON);
 
 if (!supabaseUrl || !supabaseAnonKey) {
   console.error('[supabase] missing url/key', { hasUrl: !!supabaseUrl, hasKey: !!supabaseAnonKey, isGhPages });
@@ -18,6 +23,44 @@ if (!supabaseUrl || !supabaseAnonKey) {
 if (typeof window !== 'undefined') {
   console.info('[supabase]', { url: supabaseUrl, gh: isGhPages, keyPresent: !!supabaseAnonKey });
 }
+
+// Wrapper de fetch que fuerza apikey en headers y en la URL
+const withApiKeyFetch: typeof fetch = async (input, init) => {
+  const original = input as RequestInfo;
+  let urlStr: string;
+
+  if (typeof original === 'string') {
+    urlStr = original;
+  } else {
+    urlStr = original.url;
+  }
+
+  try {
+    const url = new URL(urlStr);
+    // Añade apikey en la query para PostgREST (tolerado por Supabase)
+    if (!url.searchParams.get('apikey')) {
+      url.searchParams.set('apikey', supabaseAnonKey);
+    }
+
+    // Fuerza headers en cada request
+    const headers = new Headers((init && init.headers) || {});
+    headers.set('apikey', supabaseAnonKey);
+    headers.set('Authorization', `Bearer ${supabaseAnonKey}`);
+
+    return fetch(url.toString(), {
+      ...init,
+      headers,
+      mode: 'cors',
+      credentials: 'omit',
+    });
+  } catch {
+    // Si no es URL válida, delega a fetch, pero con headers
+    const headers = new Headers((init && init.headers) || {});
+    headers.set('apikey', supabaseAnonKey);
+    headers.set('Authorization', `Bearer ${supabaseAnonKey}`);
+    return fetch(original as any, { ...init, headers, mode: 'cors', credentials: 'omit' });
+  }
+};
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   global: {
@@ -30,6 +73,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     persistSession: true,
     autoRefreshToken: true,
   },
+  fetch: withApiKeyFetch,
 });
 
 export interface Database {
