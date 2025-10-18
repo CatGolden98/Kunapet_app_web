@@ -65,34 +65,58 @@ const ServiceListingNew: React.FC<ServiceListingNewProps> = ({ onNavigate, categ
 
   const loadProviders = async () => {
     setLoading(true);
-    // Consultamos services filtrados por categoría y traemos el provider embebido
+
+    // 1) Obtener services por categoría (solo ids y precio)
     const { data: svc, error } = await supabase
       .from('services')
-      .select('provider_id, price, providers(*)')
-      .eq('category', category)
-      .order('price', { ascending: true });
+      .select('provider_id, price')
+      .eq('category', category);
 
     if (error) {
+      console.error('[services][error]', error);
       setProviders([]);
       setLoading(false);
       return;
     }
 
-    // Dedupe por provider_id y anexa un precio mínimo de referencia
-    const map = new Map<string, any>();
-    (svc || []).forEach((row: any) => {
-      const prov = row.providers;
-      if (!prov) return;
-      const existing = map.get(row.provider_id);
-      if (!existing) {
-        map.set(row.provider_id, { ...prov, services: [{ price: row.price }] });
-      } else {
-        existing.services = existing.services || [];
-        existing.services.push({ price: row.price });
-      }
+    // Logs de diagnóstico
+    console.info('[services]', category, 'rows:', (svc || []).length, (svc || []).slice(0, 3));
+    const rows = svc || [];
+    if (rows.length === 0) {
+      setProviders([]);
+      setLoading(false);
+      return;
+    }
+
+    // 2) Mapa de precio mínimo por provider
+    const priceMap = new Map<string, number>();
+    rows.forEach((r: any) => {
+      const cur = priceMap.get(r.provider_id);
+      if (cur == null || r.price < cur) priceMap.set(r.provider_id, r.price);
     });
 
-    const list = Array.from(map.values()).sort((a, b) => (b.rating || 0) - (a.rating || 0));
+    // 3) Consultar providers por IN
+    const providerIds = Array.from(priceMap.keys());
+    console.info('[providerIds]', providerIds.length, providerIds.slice(0, 5));
+    const { data: provs, error: pErr } = await supabase
+      .from('providers')
+      .select('*')
+      .in('id', providerIds)
+      .order('rating', { ascending: false });
+
+    if (pErr) {
+      console.error('[providers][error]', pErr);
+      setProviders([]);
+      setLoading(false);
+      return;
+    }
+
+    const list = (provs || []).map((p: any) => ({
+      ...p,
+      services: [{ price: priceMap.get(p.id) }],
+    }));
+
+    console.info('[providers list]', list.length, list.map((p: any) => p.business_name).slice(0, 5));
     setProviders(list);
     setLoading(false);
   };
